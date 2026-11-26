@@ -15,7 +15,7 @@
 // path over 1,000 bytes. Anything over a cap is refused here first, so a bad
 // entry fails loudly on my machine instead of silently at the gate.
 
-import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
@@ -28,12 +28,27 @@ const DOSSIER_LIMITS = {
   game_path_max_bytes: 1000,
 };
 
+// Remove every entry inside dir, but never dir itself: the grader's /output
+// is a bind mount, so deleting it fails with EBUSY ("Device or resource busy").
+// Clearing only the contents keeps the "no stale files" guarantee while the
+// mount point itself always survives.
+function clearDirContents(dir) {
+  mkdirSync(dir, { recursive: true });
+  // Each child is removed individually (recursive, so a stale game/ or
+  // screenshots/ directory from an earlier run goes too); dir itself is
+  // never passed to rmSync.
+  for (const entry of readdirSync(dir)) {
+    rmSync(join(dir, entry), { recursive: true, force: true });
+  }
+}
+
 function stageEntry(repoRoot, outDir) {
   // Start from an empty output directory so a stale file from an earlier run
   // can never survive into the entry (the scorer caps screenshots at four,
-  // and a leftover fifth would fail the gate).
-  rmSync(outDir, { recursive: true, force: true });
-  mkdirSync(outDir, { recursive: true });
+  // and a leftover fifth would fail the gate). The clear runs before any
+  // copy below, so a stale screenshot is removed even if the new copy
+  // writes fewer files than the previous run did.
+  clearDirContents(outDir);
   cpSync(join(repoRoot, 'game'), join(outDir, 'game'), { recursive: true });
   mkdirSync(join(outDir, 'screenshots'), { recursive: true });
   const shotsDir = join(repoRoot, 'screenshots');
